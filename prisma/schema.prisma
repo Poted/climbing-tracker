@@ -1,0 +1,157 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+
+  units    TrainingUnit[]
+  planDays PlanDay[]
+  sessions TrainingSession[]
+  gyms     Gym[]
+}
+
+model TrainingUnit {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  type        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planEntries PlanDayUnit[]
+  sessionLogs SessionUnitLog[]
+}
+
+model PlanDay {
+  id        String   @id @default(cuid())
+  userId    String
+  dayNumber Int
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  units    PlanDayUnit[]
+  sessions TrainingSession[]
+
+  @@unique([userId, dayNumber])
+}
+
+model PlanDayUnit {
+  id             String @id @default(cuid())
+  planDayId      String
+  trainingUnitId String
+  order          Int
+  targetReps     Int?
+  targetSets     Int?
+  timesPerDay    Int    @default(1)
+  notes          String?
+
+  planDay      PlanDay      @relation(fields: [planDayId], references: [id], onDelete: Cascade)
+  trainingUnit TrainingUnit @relation(fields: [trainingUnitId], references: [id], onDelete: Cascade)
+  sessionLogs  SessionUnitLog[]
+}
+
+model TrainingSession {
+  id              String    @id @default(cuid())
+  userId          String
+  date            String
+  planDayId       String?
+  cycleNumber     Int       @default(1)
+  notes           String?
+  completedAt     DateTime?
+  rpe             Int?
+  fingersBefore   Int?
+  bicepsBefore    Int?
+  shouldersBefore Int?
+  fatigueBefore   Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planDay  PlanDay?         @relation(fields: [planDayId], references: [id], onDelete: SetNull)
+  unitLogs SessionUnitLog[]
+
+  @@unique([userId, date])
+}
+
+model Gym {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  type      String   @default("boulder")
+  createdAt DateTime @default(now())
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  grades      GradeMapping[]
+  sessionLogs SessionUnitLog[]
+}
+
+model GradeMapping {
+  id         String @id @default(cuid())
+  gymId      String
+  localGrade String
+  order      Int
+
+  gym Gym @relation(fields: [gymId], references: [id], onDelete: Cascade)
+}
+
+model SessionUnitLog {
+  id             String  @id @default(cuid())
+  sessionId      String
+  trainingUnitId String
+  planDayUnitId  String?
+  completed      Boolean @default(false)
+  notes          String?
+  repsActual     Int?
+  setsActual     Int?
+  durationSec    Int?
+  distanceM      Float?
+  weightKg       Float?
+  gripType       String?
+  gymId          String?
+
+  session      TrainingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  trainingUnit TrainingUnit    @relation(fields: [trainingUnitId], references: [id], onDelete: Cascade)
+  planDayUnit  PlanDayUnit?    @relation(fields: [planDayUnitId], references: [id], onDelete: SetNull)
+  gym          Gym?            @relation(fields: [gymId], references: [id])
+  climbLogs    ClimbLog[]
+  setLogs      SetLog[]
+}
+
+model SetLog {
+  id           String         @id @default(cuid())
+  sessionLogId String
+  setNumber    Int
+  reps         Int
+  weightKg     Float?
+  createdAt    DateTime       @default(now())
+
+  sessionLog SessionUnitLog @relation(fields: [sessionLogId], references: [id], onDelete: Cascade)
+}
+
+model ClimbLog {
+  id            String   @id @default(cuid())
+  sessionLogId  String
+  grade         String
+  gymGradeOrder Int?
+  wallColor     String?
+  attempts      Int      @default(1)
+  style         String   @default("redpoint")
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  sessionLog SessionUnitLog @relation(fields: [sessionLogId], references: [id], onDelete: Cascade)
+}
