@@ -149,10 +149,16 @@ export async function removePlanDayUnit(id: string) {
 
 // ─── Sessions ─────────────────────────────────────────────────────────
 
-export async function getSessions(limit = 30) {
+export async function getSessions(limit = 100, month?: string) {
   const userId = await getUserId()
+  let dateFilter: { gte: string; lt: string } | undefined
+  if (month) {
+    const [year, mon] = month.split('-').map(Number)
+    const nextMon = mon === 12 ? `${year + 1}-01` : `${year}-${String(mon + 1).padStart(2, '0')}`
+    dateFilter = { gte: `${month}-01`, lt: `${nextMon}-01` }
+  }
   return prisma.trainingSession.findMany({
-    where: { userId },
+    where: { userId, ...(dateFilter ? { date: dateFilter } : {}) },
     orderBy: { date: 'desc' },
     take: limit,
     include: sessionInclude,

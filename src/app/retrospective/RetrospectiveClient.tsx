@@ -190,6 +190,12 @@ export default function RetrospectiveClient({ sessions, cycleNumber, plan }: Pro
 
   useEffect(() => {
     if (sessions.filter((s) => s.completedAt).length < 2) return
+    const cacheKey = `cycle-suggestions-v1-${cycleNumber}`
+    try {
+      const cached = localStorage.getItem(cacheKey)
+      if (cached) { setSuggestions(JSON.parse(cached)); return }
+    } catch { /* ignore */ }
+
     const summary = buildSummary(sessions, cycleNumber, plan)
     fetch('/api/suggestions', {
       method: 'POST',
@@ -198,11 +204,12 @@ export default function RetrospectiveClient({ sessions, cycleNumber, plan }: Pro
     })
       .then((r) => r.json())
       .then((data) => {
-        if (data.error) setSuggestionsError(data.error)
-        else setSuggestions(data.suggestions)
+        if (data.error) { setSuggestionsError(data.error); return }
+        setSuggestions(data.suggestions)
+        try { localStorage.setItem(cacheKey, JSON.stringify(data.suggestions)) } catch { /* ignore */ }
       })
       .catch(() => setSuggestionsError('Failed to load suggestions.'))
-  }, [sessions, cycleNumber])
+  }, [sessions, cycleNumber, plan])
 
   if (sessions.length === 0) {
     return <p className="text-slate-400 text-sm text-center py-12">No sessions recorded for cycle {cycleNumber}.</p>
