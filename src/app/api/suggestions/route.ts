@@ -10,7 +10,8 @@ WHAT IS TRACKED IN THIS APP (the only data you have):
 - RPE per session (1–10 scale, how hard the session felt)
 - Pre-session body state: fingers, biceps/tendons, shoulders, general fatigue (1–5 scale)
 - Climbing logs: grade difficulty order, style per climb (onsight/flash/redpoint/hangdog)
-- Strength exercise logs: sets and reps per session
+- Strength exercise logs: sets, reps, and weight per set (positive kg = added load; negative kg = machine assistance/counterweight)
+- Cardio logs: duration (minutes) and distance (km) per session
 - Session dates (used to compute recovery gaps)
 - The athlete's current training plan (days, units, targets)
 
@@ -82,6 +83,14 @@ interface SuggestionRequest {
     lastReps: number
     changePercent: number
     sessionCount: number
+    firstAvgWeightKg: number | null
+    lastAvgWeightKg: number | null
+  }>
+  cardio: Array<{
+    name: string
+    sessionCount: number
+    totalMinutes: number | null
+    totalKm: number | null
   }>
   plan: PlanDay[]
 }
@@ -139,13 +148,27 @@ function buildPrompt(d: SuggestionRequest): string {
   }
 
   if (d.exercises.length > 0) {
-    lines.push('', '=== STRENGTH EXERCISES (total reps: first → last session) ===')
+    const fmtW = (w: number | null) => w == null ? 'n/a' : w > 0 ? `+${w.toFixed(1)}kg` : `${w.toFixed(1)}kg`
+    lines.push('', '=== STRENGTH EXERCISES (reps and avg weight per set: first → last session) ===')
     for (const e of d.exercises) {
       const sign = e.changePercent >= 0 ? '+' : ''
-      lines.push(`  ${e.name}: ${e.firstReps} → ${e.lastReps} reps (${sign}${e.changePercent.toFixed(0)}% over ${e.sessionCount} sessions)`)
+      const weightPart = (e.firstAvgWeightKg != null || e.lastAvgWeightKg != null)
+        ? ` | weight: ${fmtW(e.firstAvgWeightKg)} → ${fmtW(e.lastAvgWeightKg)}`
+        : ''
+      lines.push(`  ${e.name}: ${e.firstReps} → ${e.lastReps} reps (${sign}${e.changePercent.toFixed(0)}% over ${e.sessionCount} sessions)${weightPart}`)
     }
   } else {
     lines.push('', '=== STRENGTH EXERCISES ===', 'None logged.')
+  }
+
+  if (d.cardio.length > 0) {
+    lines.push('', '=== CARDIO ===')
+    for (const c of d.cardio) {
+      const parts: string[] = []
+      if (c.totalMinutes != null) parts.push(`${c.totalMinutes} min total`)
+      if (c.totalKm != null) parts.push(`${c.totalKm} km total`)
+      lines.push(`  ${c.name}: ${c.sessionCount} sessions, ${parts.join(', ')}`)
+    }
   }
 
   if (d.plan.length > 0) {

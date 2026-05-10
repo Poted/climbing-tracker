@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react'
 
 // ── Types ─────────────────────────────────────────────────────────────
 
-type SetLog = { setNumber: number; reps: number }
+type SetLog = { setNumber: number; reps: number; weightKg: number | null }
 type ClimbLog = { grade: string; gymGradeOrder: number | null; style: string | null; attempts: number | null }
 type Gym = { id: string; name: string; grades: { localGrade: string; order: number }[] }
 
@@ -15,6 +15,8 @@ type UnitLog = {
   completed: boolean
   repsActual: number | null
   setsActual: number | null
+  durationSec: number | null
+  distanceM: number | null
   trainingUnit: { id: string; name: string; type: string }
   setLogs: SetLog[]
   climbLogs: ClimbLog[]
@@ -99,6 +101,17 @@ function TrendIcon({ pctChange }: { pctChange: number }) {
   return <Minus size={14} className="text-slate-500" />
 }
 
+function avgSetWeight(log: UnitLog): number | null {
+  const ws = log.setLogs.filter(s => s.weightKg != null).map(s => s.weightKg!)
+  return ws.length > 0 ? ws.reduce((a, b) => a + b, 0) / ws.length : null
+}
+
+function fmtKg(w: number | null): string {
+  if (w == null) return '—'
+  const v = Math.round(w * 10) / 10
+  return v > 0 ? `+${v}kg` : `${v}kg`
+}
+
 // ── Summary builder (data sent to the AI endpoint) ────────────────────
 
 function buildSummary(sessions: Session[], cycleNumber: number, plan: PlanDay[]) {
@@ -135,8 +148,29 @@ function buildSummary(sessions: Session[], cycleNumber: number, plan: PlanDay[])
     if (logs.length < 2) return []
     const first = totalReps(logs[0])
     const last = totalReps(logs[logs.length - 1])
-    return [{ name: logs[0].trainingUnit.name, firstReps: first, lastReps: last, changePercent: pct(last, first), sessionCount: logs.length }]
+    const firstWeight = avgSetWeight(logs[0])
+    const lastWeight = avgSetWeight(logs[logs.length - 1])
+    return [{ name: logs[0].trainingUnit.name, firstReps: first, lastReps: last, changePercent: pct(last, first), sessionCount: logs.length, firstAvgWeightKg: firstWeight, lastAvgWeightKg: lastWeight }]
   })
+
+  const cardioUnitIds = Array.from(new Set(
+    done.flatMap((s) => s.unitLogs
+      .filter((l) => l.completed && l.trainingUnit.type === 'cardio')
+      .map((l) => l.trainingUnit.id))
+  ))
+  const cardio = cardioUnitIds.map((unitId) => {
+    const logs = done
+      .map((s) => s.unitLogs.find((l) => l.trainingUnit.id === unitId && l.completed))
+      .filter(Boolean) as UnitLog[]
+    const totalSec = logs.reduce((a, l) => a + (l.durationSec ?? 0), 0)
+    const totalM = logs.reduce((a, l) => a + (l.distanceM ?? 0), 0)
+    return {
+      name: logs[0].trainingUnit.name,
+      sessionCount: logs.length,
+      totalMinutes: totalSec > 0 ? Math.round(totalSec / 60) : null,
+      totalKm: totalM > 0 ? parseFloat((totalM / 1000).toFixed(1)) : null,
+    }
+  }).filter(c => c.totalMinutes != null || c.totalKm != null)
 
   return {
     cycleNumber,
@@ -168,6 +202,7 @@ function buildSummary(sessions: Session[], cycleNumber: number, plan: PlanDay[])
       onsight: stylesLogged.filter((c) => c.style === 'onsight').length,
     },
     exercises,
+    cardio,
     plan: plan.map((day) => ({
       dayNumber: day.dayNumber,
       name: day.name,
@@ -338,16 +373,21 @@ export default function RetrospectiveClient({ sessions, cycleNumber, plan }: Pro
               const first = totalReps(logs[0])
               const last = totalReps(logs[logs.length - 1])
               const change = pct(last, first)
+              const firstWeight = avgSetWeight(logs[0])
+              const lastWeight = avgSetWeight(logs[logs.length - 1])
               return (
                 <div key={unitId}>
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center justify-between mb-1 flex-wrap gap-y-0.5">
                     <span className="text-sm text-slate-300">{name}</span>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
                       <TrendIcon pctChange={change} />
                       <span className={`text-xs ${change > 5 ? 'text-emerald-400' : change < -5 ? 'text-red-400' : 'text-slate-500'}`}>
                         {first} → {last} reps
                         {change !== 0 && ` (${change > 0 ? '+' : ''}${change.toFixed(0)}%)`}
                       </span>
+                      {(firstWeight != null || lastWeight != null) && (
+                        <span className="text-xs text-slate-600">{fmtKg(firstWeight)} → {fmtKg(lastWeight)}</span>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-end gap-0.5 h-8">
@@ -358,6 +398,37 @@ export default function RetrospectiveClient({ sessions, cycleNumber, plan }: Pro
                       return <div key={i} className="flex-1 bg-emerald-700 rounded-sm" style={{ height: `${h}%` }} />
                     })}
                   </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Cardio */}
+      {done.some(s => s.unitLogs.some(l => l.completed && l.trainingUnit.type === 'cardio' && (l.durationSec != null || l.distanceM != null))) && (
+        <div className="bg-slate-800 rounded-xl p-4">
+          <p className="text-sm font-medium text-slate-300 mb-3">Cardio</p>
+          <div className="space-y-2">
+            {Array.from(new Set(
+              done.flatMap(s => s.unitLogs
+                .filter(l => l.completed && l.trainingUnit.type === 'cardio')
+                .map(l => l.trainingUnit.id))
+            )).map(unitId => {
+              const logs = done
+                .map(s => s.unitLogs.find(l => l.trainingUnit.id === unitId && l.completed))
+                .filter(Boolean) as UnitLog[]
+              const totalSec = logs.reduce((a, l) => a + (l.durationSec ?? 0), 0)
+              const totalM = logs.reduce((a, l) => a + (l.distanceM ?? 0), 0)
+              if (!totalSec && !totalM) return null
+              return (
+                <div key={unitId} className="flex items-center justify-between text-sm">
+                  <span className="text-slate-300">{logs[0].trainingUnit.name}</span>
+                  <span className="text-xs text-slate-400">
+                    {logs.length} sessions
+                    {totalSec > 0 && ` · ${Math.round(totalSec / 60)} min`}
+                    {totalM > 0 && ` · ${(totalM / 1000).toFixed(1)} km`}
+                  </span>
                 </div>
               )
             })}
