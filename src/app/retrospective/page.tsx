@@ -1,4 +1,4 @@
-import { getCycleData, getMaxCycleNumber } from '@/lib/actions'
+import { getCycleData, getMaxCycleNumber, getPlan } from '@/lib/actions'
 import { notFound } from 'next/navigation'
 import RetrospectiveClient from './RetrospectiveClient'
 import Link from 'next/link'
@@ -15,7 +15,10 @@ export default async function RetrospectivePage({
 
   if (isNaN(cycleNumber) || cycleNumber < 1) notFound()
 
-  const sessions = await getCycleData(cycleNumber)
+  const [sessions, plan] = await Promise.all([
+    getCycleData(cycleNumber),
+    getPlan(),
+  ])
 
   return (
     <div className="space-y-6">
@@ -38,7 +41,7 @@ export default async function RetrospectivePage({
         </div>
       </div>
 
-      <RetrospectiveClient sessions={sessions} cycleNumber={cycleNumber} />
+      <RetrospectiveClient sessions={sessions} cycleNumber={cycleNumber} plan={plan} />
     </div>
   )
 }

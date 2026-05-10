@@ -37,7 +37,21 @@ type Session = {
 
 type Suggestion = { icon: string; title: string; text: string; type: 'good' | 'warn' | 'info' }
 
-type Props = { sessions: Session[]; cycleNumber: number }
+type PlanUnit = {
+  order: number
+  targetSets: number | null
+  targetReps: number | null
+  timesPerDay: number | null
+  trainingUnit: { name: string; type: string }
+}
+
+type PlanDay = {
+  dayNumber: number
+  name: string | null
+  units: PlanUnit[]
+}
+
+type Props = { sessions: Session[]; cycleNumber: number; plan: PlanDay[] }
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -87,7 +101,7 @@ function TrendIcon({ pctChange }: { pctChange: number }) {
 
 // ── Summary builder (data sent to the AI endpoint) ────────────────────
 
-function buildSummary(sessions: Session[], cycleNumber: number) {
+function buildSummary(sessions: Session[], cycleNumber: number, plan: PlanDay[]) {
   const done = sessions.filter((s) => s.completedAt)
 
   const rpes = done.filter((s) => s.rpe != null).map((s) => s.rpe!)
@@ -154,18 +168,29 @@ function buildSummary(sessions: Session[], cycleNumber: number) {
       onsight: stylesLogged.filter((c) => c.style === 'onsight').length,
     },
     exercises,
+    plan: plan.map((day) => ({
+      dayNumber: day.dayNumber,
+      name: day.name,
+      units: day.units.map((u) => ({
+        name: u.trainingUnit.name,
+        type: u.trainingUnit.type,
+        targetSets: u.targetSets,
+        targetReps: u.targetReps,
+        timesPerDay: u.timesPerDay,
+      })),
+    })),
   }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────
 
-export default function RetrospectiveClient({ sessions, cycleNumber }: Props) {
+export default function RetrospectiveClient({ sessions, cycleNumber, plan }: Props) {
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null)
   const [suggestionsError, setSuggestionsError] = useState<string | null>(null)
 
   useEffect(() => {
     if (sessions.filter((s) => s.completedAt).length < 2) return
-    const summary = buildSummary(sessions, cycleNumber)
+    const summary = buildSummary(sessions, cycleNumber, plan)
     fetch('/api/suggestions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

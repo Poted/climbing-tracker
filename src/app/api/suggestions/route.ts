@@ -4,18 +4,26 @@ import { auth } from '@/auth'
 
 const client = new Anthropic()
 
-const SYSTEM_PROMPT = `You are an expert climbing and strength coach with deep knowledge of sports science, periodization, and injury prevention for climbing athletes.
+const SYSTEM_PROMPT = `You are an expert climbing and strength coach analyzing a training cycle log.
 
-Analyze the training data provided and return specific, actionable coaching recommendations for the next training cycle.
+WHAT IS TRACKED IN THIS APP (the only data you have):
+- RPE per session (1–10 scale, how hard the session felt)
+- Pre-session body state: fingers, biceps/tendons, shoulders, general fatigue (1–5 scale)
+- Climbing logs: grade difficulty order, style per climb (onsight/flash/redpoint/hangdog)
+- Strength exercise logs: sets and reps per session
+- Session dates (used to compute recovery gaps)
+- The athlete's current training plan (days, units, targets)
+
+WHAT IS NOT TRACKED AND MUST NEVER BE MENTIONED:
+Sleep, nutrition, diet, hydration, bodyweight, stress, work schedule, lifestyle factors.
+Do not suggest tracking any of these. Do not speculate about them.
 
 RULES:
-- Every recommendation must include a concrete intervention: exact sets/reps, duration, frequency, or a named protocol (4x4s, ARC, limit bouldering, antagonist training). Never say "try harder" or "climb more difficult routes".
-- Base all advice on well-established sports science and climbing training methodology. Do NOT cite specific papers by author name or year — you may misremember them. Say "research shows" or "it is well established in sports science" instead.
-- If a data point is missing or insufficient to draw a conclusion, say so explicitly rather than inventing insights.
-- ALWAYS prioritize injury risk warnings. If finger health is low, that takes precedence over performance advice.
-- When body state data is not logged, acknowledge that and explain what should be tracked to give better advice.
-- Maximum 5 recommendations, ordered by impact.
-- Be direct. If the pattern looks bad, say so.
+1. Comment ONLY on data that is present. If a field says "not logged", skip it — do not suggest the athlete start logging it, do not build recommendations around it.
+2. Give SPECIFIC interventions: named protocols (4×4s, ARC, limit bouldering), exact sets/reps/duration/frequency. Never say "try harder" or "push more".
+3. Base advice on established sports science. Do NOT cite specific authors or paper years — say "research shows" or "it is well established".
+4. Prioritize injury risk above all else.
+5. Output exactly 5 items. The LAST item must be a concrete change to the athlete's training plan — add, remove, or modify a specific unit, day, or target based on what the data shows.
 
 Output ONLY a raw JSON array — no markdown, no code fences, no other text:
 [
@@ -23,9 +31,23 @@ Output ONLY a raw JSON array — no markdown, no code fences, no other text:
     "type": "warn" | "good" | "info",
     "icon": "single emoji",
     "title": "5-8 word title",
-    "text": "2-4 sentences. Specific protocol or intervention. Grounded in training science."
+    "text": "2-4 sentences. Specific and actionable."
   }
 ]`
+
+interface PlanUnit {
+  name: string
+  type: string
+  targetSets: number | null
+  targetReps: number | null
+  timesPerDay: number | null
+}
+
+interface PlanDay {
+  dayNumber: number
+  name: string | null
+  units: PlanUnit[]
+}
 
 interface SuggestionRequest {
   cycleNumber: number
@@ -61,6 +83,7 @@ interface SuggestionRequest {
     changePercent: number
     sessionCount: number
   }>
+  plan: PlanDay[]
 }
 
 function buildPrompt(d: SuggestionRequest): string {
@@ -82,7 +105,7 @@ function buildPrompt(d: SuggestionRequest): string {
     lines.push(`RPE variance: ${f(d.rpeVariance, 2)} (low = same effort every session, high = wave loading)`)
   }
 
-  lines.push('', '=== PRE-SESSION BODY STATE (1 = sore/exhausted, 5 = fresh/healthy) ===')
+  lines.push('', '=== PRE-SESSION BODY STATE (1=sore/exhausted, 5=fresh/healthy) ===')
   if (d.bodyState) {
     lines.push(
       `Fingers: ${f(d.bodyState.fingers)}/5`,
@@ -91,7 +114,7 @@ function buildPrompt(d: SuggestionRequest): string {
       `General fatigue: ${f(d.bodyState.fatigue)}/5`,
     )
   } else {
-    lines.push('Not logged — athlete did not track pre-session body state this cycle.')
+    lines.push('Not logged.')
   }
 
   lines.push('', '=== SESSION DENSITY ===')
@@ -112,17 +135,34 @@ function buildPrompt(d: SuggestionRequest): string {
       `  Onsight:  ${s.onsight} (${pct(s.onsight, s.stylesLogged)})`,
     )
   } else {
-    lines.push('Climbing style: not logged (athlete did not track onsight/redpoint/hangdog per climb).')
+    lines.push('Style: not logged.')
   }
 
   if (d.exercises.length > 0) {
-    lines.push('', '=== STRENGTH EXERCISES (total reps: first session → last session) ===')
+    lines.push('', '=== STRENGTH EXERCISES (total reps: first → last session) ===')
     for (const e of d.exercises) {
       const sign = e.changePercent >= 0 ? '+' : ''
       lines.push(`  ${e.name}: ${e.firstReps} → ${e.lastReps} reps (${sign}${e.changePercent.toFixed(0)}% over ${e.sessionCount} sessions)`)
     }
   } else {
     lines.push('', '=== STRENGTH EXERCISES ===', 'None logged.')
+  }
+
+  if (d.plan.length > 0) {
+    lines.push('', '=== CURRENT TRAINING PLAN ===')
+    for (const day of d.plan) {
+      lines.push(`Day ${day.dayNumber}${day.name ? ` — "${day.name}"` : ''}:`)
+      for (const u of day.units) {
+        const targets = [
+          u.targetSets != null && u.targetReps != null ? `${u.targetSets}×${u.targetReps} reps` : null,
+          u.timesPerDay != null && u.timesPerDay > 1 ? `${u.timesPerDay}×/day` : null,
+        ].filter(Boolean).join(', ')
+        lines.push(`  - ${u.name} (${u.type})${targets ? ` — target: ${targets}` : ''}`)
+      }
+    }
+    lines.push('', 'The last of your 5 suggestions must be a specific change to this plan.')
+  } else {
+    lines.push('', '=== TRAINING PLAN ===', 'No plan configured.')
   }
 
   return lines.join('\n')
