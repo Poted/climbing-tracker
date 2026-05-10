@@ -309,14 +309,14 @@ export async function getPreviousUnitLogs(
 ): Promise<Record<string, {
   repsActual: number | null
   setsActual: number | null
-  setLogs: { setNumber: number; reps: number }[]
+  setLogs: { setNumber: number; reps: number; weightKg: number | null }[]
   climbLogs: { grade: string; gymGradeOrder: number | null }[]
 }>> {
   const userId = await getUserId()
   const result: Record<string, {
     repsActual: number | null
     setsActual: number | null
-    setLogs: { setNumber: number; reps: number }[]
+    setLogs: { setNumber: number; reps: number; weightKg: number | null }[]
     climbLogs: { grade: string; gymGradeOrder: number | null }[]
   }> = {}
 

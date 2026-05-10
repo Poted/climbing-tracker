@@ -67,7 +67,7 @@ type PlanDay = {
 type PrevLog = {
   repsActual: number | null
   setsActual: number | null
-  setLogs: { setNumber: number; reps: number }[]
+  setLogs: { setNumber: number; reps: number; weightKg: number | null }[]
   climbLogs: { grade: string; gymGradeOrder: number | null }[]
 }
 
@@ -166,12 +166,18 @@ function ClimbLogForm({ sessionLogId, onAdded, onCancel }: {
 
 // ── Set logging for exercises ─────────────────────────────────────────
 
+function fmtWeight(w: number | null | undefined) {
+  if (w == null || w === 0) return ''
+  return w > 0 ? ` +${w}kg` : ` ${w}kg`
+}
+
 function SetList({ log, prev, onUpdate }: {
   log: UnitLog
   prev: PrevLog | null
   onUpdate: (u: UnitLog) => void
 }) {
   const [addingReps, setAddingReps] = useState('')
+  const [addingWeight, setAddingWeight] = useState('')
   const [showInput, setShowInput] = useState(false)
   const [isPending, startTransition] = useTransition()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -181,16 +187,20 @@ function SetList({ log, prev, onUpdate }: {
   }, [showInput])
 
   function openAdd() {
-    const lastReps = log.setLogs.at(-1)?.reps ?? prev?.setLogs.at(0)?.reps ?? ''
-    setAddingReps(String(lastReps))
+    const lastSet = log.setLogs.at(-1)
+    const prevFirstSet = prev?.setLogs.at(0)
+    setAddingReps(String(lastSet?.reps ?? prevFirstSet?.reps ?? ''))
+    const w = lastSet?.weightKg ?? prevFirstSet?.weightKg ?? null
+    setAddingWeight(w != null ? String(w) : '')
     setShowInput(true)
   }
 
   function saveSet() {
     const r = parseInt(addingReps)
     if (!r || r <= 0) return
+    const w = addingWeight !== '' ? parseFloat(addingWeight) : undefined
     startTransition(async () => {
-      const set = await addSetLog({ sessionLogId: log.id, reps: r })
+      const set = await addSetLog({ sessionLogId: log.id, reps: r, weightKg: w })
       const newSetLogs = [...log.setLogs, set]
       const totalReps = newSetLogs.reduce((s, x) => s + x.reps, 0)
       onUpdate({ ...log, setLogs: newSetLogs, repsActual: totalReps, setsActual: newSetLogs.length, completed: true })
@@ -212,12 +222,23 @@ function SetList({ log, prev, onUpdate }: {
   const prevTotal = prev ? (prev.setLogs.length > 0 ? prev.setLogs.reduce((s, x) => s + x.reps, 0) : prev.repsActual) : null
   const prevSets = prev ? (prev.setLogs.length > 0 ? prev.setLogs.length : prev.setsActual) : null
 
+  // Show weight in "Last time" — per set if mixed, single suffix if all same
+  const prevSetLabel = () => {
+    if (!prev || prev.setLogs.length === 0) return null
+    const weights = prev.setLogs.map((s) => s.weightKg)
+    const allSame = weights.every((w) => w === weights[0])
+    if (allSame) {
+      return prev.setLogs.map((s) => s.reps).join(' · ') + ` = ${prevTotal} reps` + fmtWeight(weights[0])
+    }
+    return prev.setLogs.map((s) => `${s.reps}${fmtWeight(s.weightKg)}`).join(' · ')
+  }
+
   return (
     <div className="space-y-2">
       {prev && (prevTotal || prevSets) && (
         <p className="text-xs text-slate-500">
           Last time: {prev.setLogs.length > 0
-            ? prev.setLogs.map((s) => s.reps).join(' · ') + ` = ${prevTotal} reps`
+            ? prevSetLabel()
             : `${prevTotal} reps · ${prevSets} sets`}
         </p>
       )}
@@ -226,6 +247,11 @@ function SetList({ log, prev, onUpdate }: {
         <div key={s.id} className="flex items-center gap-2">
           <span className="text-xs text-slate-500 w-10">Set {s.setNumber}</span>
           <span className="text-sm font-medium">{s.reps} reps</span>
+          {s.weightKg != null && s.weightKg !== 0 && (
+            <span className={`text-xs font-medium ${s.weightKg > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {fmtWeight(s.weightKg)}
+            </span>
+          )}
           <button onClick={() => removeSet(s.id)} disabled={isPending} className="ml-auto p-1 text-slate-600 hover:text-red-400">
             <X size={13} />
           </button>
@@ -235,17 +261,17 @@ function SetList({ log, prev, onUpdate }: {
       {log.setLogs.length > 0 && (
         <p className="text-xs text-slate-400 font-medium">
           Total: {totalReps} reps · {log.setLogs.length} sets
-          {prevTotal && log.setLogs.length > 0 && totalReps > prevTotal && (
-            <span className="text-emerald-400 ml-2">↑ {totalReps - prevTotal} more than last time</span>
+          {prevTotal != null && totalReps > prevTotal && (
+            <span className="text-emerald-400 ml-2">↑ {totalReps - prevTotal} vs last time</span>
           )}
-          {prevTotal && log.setLogs.length > 0 && totalReps < prevTotal && (
-            <span className="text-yellow-500 ml-2">↓ {prevTotal - totalReps} less than last time</span>
+          {prevTotal != null && totalReps < prevTotal && (
+            <span className="text-yellow-500 ml-2">↓ {prevTotal - totalReps} vs last time</span>
           )}
         </p>
       )}
 
       {showInput ? (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-slate-500 w-10">Set {log.setLogs.length + 1}</span>
           <input
             ref={inputRef}
@@ -253,10 +279,17 @@ function SetList({ log, prev, onUpdate }: {
             value={addingReps}
             onChange={(e) => setAddingReps(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') saveSet(); if (e.key === 'Escape') setShowInput(false) }}
-            className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-emerald-500"
+            className="w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-emerald-500"
             placeholder="reps"
           />
-          <span className="text-xs text-slate-500">reps</span>
+          <input
+            type="number" step="0.5"
+            value={addingWeight}
+            onChange={(e) => setAddingWeight(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') saveSet(); if (e.key === 'Escape') setShowInput(false) }}
+            className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-emerald-500"
+            placeholder="kg (opt)"
+          />
           <button onClick={saveSet} disabled={isPending || !addingReps} className="p-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded">
             <Check size={13} />
           </button>
