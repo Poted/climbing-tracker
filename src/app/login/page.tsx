@@ -1,7 +1,7 @@
 'use client'
 
-import { signIn } from 'next-auth/react'
 import { useState, useTransition } from 'react'
+import { authenticate } from '@/lib/actions'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
@@ -16,13 +16,9 @@ export default function LoginPage() {
     e.preventDefault()
     setError(null)
     startTransition(async () => {
-      const result = await signIn('credentials', { email, password, redirect: false })
-      if (result?.error) {
-        setError('Nieprawidłowy email lub hasło.')
-      } else {
-        router.push('/')
-        router.refresh()
-      }
+      const err = await authenticate(email, password)
+      if (err) setError(err)
+      // sukces → authenticate() rzuca NEXT_REDIRECT → Next.js automatycznie nawiguje
     })
   }
 

@@ -1,4 +1,4 @@
-import { getCycleData, getMaxCycleNumber, getPlan } from '@/lib/actions'
+import { getCycles, getCycleWithSessions } from '@/lib/actions'
 import { notFound } from 'next/navigation'
 import RetrospectiveClient from './RetrospectiveClient'
 import Link from 'next/link'
@@ -10,15 +10,31 @@ export default async function RetrospectivePage({
   searchParams: Promise<{ cycle?: string }> | { cycle?: string }
 }) {
   const params = await Promise.resolve(searchParams)
-  const maxCycle = await getMaxCycleNumber()
-  const cycleNumber = params.cycle ? parseInt(params.cycle) : maxCycle
+  const cycles = await getCycles()
 
-  if (isNaN(cycleNumber) || cycleNumber < 1) notFound()
+  if (cycles.length === 0) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <Link href="/today" className="p-1.5 text-slate-400 hover:text-slate-200 transition-colors">
+            <ChevronLeft size={20} />
+          </Link>
+          <h1 className="text-xl font-bold">Retrospective</h1>
+        </div>
+        <p className="text-slate-400 text-sm text-center py-12">
+          No training cycles yet. Start a cycle from the Today page.
+        </p>
+      </div>
+    )
+  }
 
-  const [sessions, plan] = await Promise.all([
-    getCycleData(cycleNumber),
-    getPlan(),
-  ])
+  const targetId = params.cycle ?? cycles[0].id
+  const cycle = await getCycleWithSessions(targetId)
+  if (!cycle) notFound()
+
+  const idx = cycles.findIndex((c) => c.id === targetId)
+  const prevCycleId = cycles[idx + 1]?.id ?? null  // older
+  const nextCycleId = cycles[idx - 1]?.id ?? null  // newer
 
   return (
     <div className="space-y-6">
@@ -27,21 +43,27 @@ export default async function RetrospectivePage({
           <ChevronLeft size={20} />
         </Link>
         <div>
-          <h1 className="text-xl font-bold">Cycle {cycleNumber} — Retrospective</h1>
-          {maxCycle > 1 && (
+          <h1 className="text-xl font-bold">
+            {cycle.name ?? `Cycle — ${cycle.startDate}`}
+          </h1>
+          {cycles.length > 1 && (
             <div className="flex gap-3 mt-1">
-              {cycleNumber > 1 && (
-                <Link href={`/retrospective?cycle=${cycleNumber - 1}`} className="text-xs text-slate-500 hover:text-slate-300">← Cycle {cycleNumber - 1}</Link>
+              {prevCycleId && (
+                <Link href={`/retrospective?cycle=${prevCycleId}`} className="text-xs text-slate-500 hover:text-slate-300">
+                  ← Older
+                </Link>
               )}
-              {cycleNumber < maxCycle && (
-                <Link href={`/retrospective?cycle=${cycleNumber + 1}`} className="text-xs text-slate-500 hover:text-slate-300">Cycle {cycleNumber + 1} →</Link>
+              {nextCycleId && (
+                <Link href={`/retrospective?cycle=${nextCycleId}`} className="text-xs text-slate-500 hover:text-slate-300">
+                  Newer →
+                </Link>
               )}
             </div>
           )}
         </div>
       </div>
 
-      <RetrospectiveClient sessions={sessions} cycleNumber={cycleNumber} plan={plan} />
+      <RetrospectiveClient cycle={cycle} />
     </div>
   )
 }

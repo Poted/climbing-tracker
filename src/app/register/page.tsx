@@ -1,17 +1,15 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { signIn } from 'next-auth/react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
+import { authenticate } from '@/lib/actions'
 import { registerUser } from './actions'
+import Link from 'next/link'
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
-  const router = useRouter()
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -22,9 +20,10 @@ export default function RegisterPage() {
         setError(result.error)
         return
       }
-      await signIn('credentials', { email, password, redirect: false })
-      router.push('/')
-      router.refresh()
+      // Konto stworzone — logujemy od razu
+      const err = await authenticate(email, password)
+      if (err) setError(err)
+      // sukces → authenticate() rzuca NEXT_REDIRECT → automatyczna nawigacja
     })
   }
 

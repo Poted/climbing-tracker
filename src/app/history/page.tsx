@@ -1,7 +1,10 @@
-import { getSessions } from '@/lib/actions'
+import { getSessions, getCycles } from '@/lib/actions'
 import { format, parseISO } from 'date-fns'
 import { enUS } from 'date-fns/locale'
-import { CheckCircle2, Circle, Mountain, ChevronLeft, ChevronRight, ClipboardList } from 'lucide-react'
+import {
+  CheckCircle2, Circle, Mountain, Ruler, Dumbbell,
+  ChevronLeft, ChevronRight, ClipboardList,
+} from 'lucide-react'
 import Link from 'next/link'
 
 function prevMonth(m: string) {
@@ -24,14 +27,19 @@ export default async function HistoryPage({
   const month = params.month ?? currentMonth
   const isCurrentMonth = month === currentMonth
 
-  const sessions = await getSessions(100, month)
+  const [sessions, cycles] = await Promise.all([
+    getSessions(100, month),
+    getCycles(),
+  ])
 
+  const cycleMap = new Map(cycles.map((c) => [c.id, c]))
   const [year, mon] = month.split('-').map(Number)
   const monthLabel = format(new Date(year, mon - 1, 1), 'MMMM yyyy', { locale: enUS })
 
-  const cycleNumbers = Array.from(new Set(
-    sessions.filter((s) => s.cycleNumber != null).map((s) => s.cycleNumber!)
-  )).sort((a, b) => a - b)
+  const cycleIdsInMonth = Array.from(new Set(
+    sessions.filter((s) => (s as { cycleId?: string | null }).cycleId != null)
+      .map((s) => (s as { cycleId: string }).cycleId)
+  ))
 
   return (
     <div className="overflow-x-hidden">
@@ -56,18 +64,22 @@ export default async function HistoryPage({
       </div>
 
       {/* Retrospective links for cycles in this month */}
-      {cycleNumbers.length > 0 && (
+      {cycleIdsInMonth.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-4">
-          {cycleNumbers.map((n) => (
-            <Link
-              key={n}
-              href={`/retrospective?cycle=${n}`}
-              className="flex items-center gap-1.5 text-xs bg-slate-800 border border-slate-700 hover:border-emerald-700 text-slate-400 hover:text-emerald-400 px-3 py-1.5 rounded-lg transition-colors"
-            >
-              <ClipboardList size={12} />
-              Cycle {n} — Retrospective
-            </Link>
-          ))}
+          {cycleIdsInMonth.map((id) => {
+            const cycle = cycleMap.get(id)
+            const label = cycle?.name ?? `Started ${cycle?.startDate ?? '…'}`
+            return (
+              <Link
+                key={id}
+                href={`/retrospective?cycle=${id}`}
+                className="flex items-center gap-1.5 text-xs bg-slate-800 border border-slate-700 hover:border-emerald-700 text-slate-400 hover:text-emerald-400 px-3 py-1.5 rounded-lg transition-colors"
+              >
+                <ClipboardList size={12} />
+                {label} — Retrospective
+              </Link>
+            )
+          })}
         </div>
       )}
 
@@ -79,74 +91,116 @@ export default async function HistoryPage({
 
       <div className="space-y-3">
         {sessions.map((s) => {
-          const doneCount = s.unitLogs.filter((l) => l.completed).length
-          const total = s.unitLogs.length
-          const climbCount = s.unitLogs.reduce((sum, l) => sum + l.climbLogs.length, 0)
+          const activities = s.activities ?? []
+          const climbing = activities.filter((a) => a.type === 'climbing')
+          const running = activities.filter((a) => a.type === 'running')
+          const other = activities.filter((a) => a.type === 'other')
+          const isLegacy = activities.length === 0 && s.unitLogs.length > 0
           const isCompleted = !!s.completedAt
+          const sWithCycle = s as typeof s & { cycleId?: string | null }
 
           return (
-            <div key={s.id} className="bg-slate-800 rounded-xl p-4 min-w-0 overflow-hidden">
-              <div className="flex items-start justify-between gap-2 min-w-0">
-                <div>
-                  <p className="font-medium text-sm">
-                    {format(parseISO(s.date), 'EEEE, MMM d', { locale: enUS })}
-                  </p>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {s.planDay
-                      ? `Day ${s.planDay.dayNumber}${s.planDay.name ? ` — ${s.planDay.name}` : ''}`
-                      : 'Free session'}
-                    {s.cycleNumber != null && (
-                      <span className="ml-2 text-slate-600">· Cycle {s.cycleNumber}</span>
+            <Link key={s.id} href={`/today?date=${s.date}`} className="block">
+              <div className="bg-slate-800 rounded-xl p-4 min-w-0 overflow-hidden active:bg-slate-750 transition-colors">
+                {/* Header */}
+                <div className="flex items-start justify-between gap-2 min-w-0">
+                  <div>
+                    <p className="font-medium text-sm">
+                      {format(parseISO(s.date), 'EEEE, MMM d', { locale: enUS })}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {activities.length > 0
+                        ? `${activities.length} activit${activities.length === 1 ? 'y' : 'ies'}`
+                        : isLegacy
+                        ? `${s.unitLogs.length} unit${s.unitLogs.length === 1 ? '' : 's'}`
+                        : 'No activities'}
+                      {sWithCycle.cycleId && cycleMap.has(sWithCycle.cycleId) && (
+                        <span className="ml-2 text-slate-600">
+                          · {cycleMap.get(sWithCycle.cycleId)?.name ?? 'Cycle'}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {s.rpe != null && (
+                      <span className="text-xs text-slate-600">RPE {s.rpe}</span>
                     )}
-                  </p>
+                    {isCompleted
+                      ? <CheckCircle2 size={16} className="text-emerald-400" />
+                      : <Circle size={16} className="text-slate-600" />}
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {s.rpe != null && (
-                    <span className="text-xs text-slate-600">RPE {s.rpe}</span>
-                  )}
-                  {isCompleted
-                    ? <CheckCircle2 size={16} className="text-emerald-400" />
-                    : <Circle size={16} className="text-slate-600" />}
-                  <span className={`text-xs ${isCompleted ? 'text-emerald-400' : 'text-slate-500'}`}>
-                    {doneCount}/{total}
-                  </span>
-                </div>
-              </div>
 
-              <div className="mt-3 flex flex-wrap gap-1.5 min-w-0">
-                {s.unitLogs.map((l) => (
-                  <span
-                    key={l.id}
-                    className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${
-                      l.completed
-                        ? 'bg-emerald-900/60 text-emerald-300'
-                        : 'bg-slate-700 text-slate-400 line-through'
-                    }`}
-                  >
-                    {l.trainingUnit.name}
-                    {l.repsActual ? ` ×${l.repsActual}` : ''}
-                  </span>
-                ))}
-              </div>
+                {/* New model: activities */}
+                {activities.length > 0 && (
+                  <div className="mt-3 space-y-1.5">
+                    {climbing.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                        <Mountain size={12} className="text-emerald-400 shrink-0" />
+                        {climbing.slice(0, 10).map((c) => {
+                          const abbr: Record<string, string> = {
+                            onsight: 'os', flash: 'fl', redpoint: 'rp',
+                            topRope: 'tr', attempt: '✗',
+                          }
+                          const suf = c.style ? ` (${abbr[c.style] ?? c.style})` : ''
+                          return (
+                            <span
+                              key={c.id}
+                              className="text-xs bg-emerald-900/40 text-emerald-300 px-1.5 py-0.5 rounded shrink-0"
+                            >
+                              {c.grade ?? '?'}{suf}
+                            </span>
+                          )
+                        })}
+                        {climbing.length > 10 && (
+                          <span className="text-xs text-slate-600">+{climbing.length - 10}</span>
+                        )}
+                      </div>
+                    )}
+                    {running.map((r) => (
+                      <div key={r.id} className="flex items-center gap-1.5 text-xs text-slate-400">
+                        <Ruler size={12} className="text-blue-400 shrink-0" />
+                        <span>
+                          {r.distanceKm != null ? `${r.distanceKm} km` : 'Run'}
+                          {r.durationMin != null && ` · ${r.durationMin} min`}
+                          {r.pace != null && ` · ${r.pace.toFixed(1)} min/km`}
+                        </span>
+                      </div>
+                    ))}
+                    {other.map((a) => (
+                      <div key={a.id} className="flex items-center gap-1.5 text-xs text-slate-400">
+                        <Dumbbell size={12} className="text-slate-500 shrink-0" />
+                        <span>
+                          {a.name ?? 'Other'}
+                          {a.durationMin != null && ` · ${a.durationMin} min`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-              {climbCount > 0 && (
-                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-slate-400 min-w-0">
-                  <Mountain size={12} className="text-emerald-400" />
-                  {climbCount} {climbCount === 1 ? 'climb' : 'climbs'}
-                  {' · '}
-                  {s.unitLogs
-                    .flatMap((l) => l.climbLogs)
-                    .slice(0, 8)
-                    .map((c) => {
-                      const abbr: Record<string, string> = { onsight: 'os', flash: 'fl', redpoint: 'rp', hangdog: 'hd' }
-                      const suf = c.style ? ` (${abbr[c.style] ?? c.style})` : ''
-                      return c.grade + suf
-                    })
-                    .join(', ')}
-                  {s.unitLogs.flatMap((l) => l.climbLogs).length > 8 && '…'}
-                </div>
-              )}
-            </div>
+                {/* Legacy: unitLogs fallback */}
+                {isLegacy && (
+                  <div className="mt-3 flex flex-wrap gap-1.5 min-w-0">
+                    {s.unitLogs.slice(0, 6).map((l) => (
+                      <span
+                        key={l.id}
+                        className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${
+                          l.completed
+                            ? 'bg-slate-700 text-slate-300'
+                            : 'bg-slate-700 text-slate-500 line-through'
+                        }`}
+                      >
+                        {l.trainingUnit.name}
+                      </span>
+                    ))}
+                    {s.unitLogs.length > 6 && (
+                      <span className="text-xs text-slate-600">+{s.unitLogs.length - 6}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </Link>
           )
         })}
       </div>

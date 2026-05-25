@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import Nav from '@/components/Nav'
 import Providers from '@/components/Providers'
+import PWAInstaller from '@/components/PWAInstaller'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
@@ -10,18 +11,33 @@ export const metadata: Metadata = {
   title: 'Climbing Tracker',
   description: 'Track your climbing and fitness training',
   manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'Climbing Tracker',
+  },
+  formatDetection: {
+    telephone: false,
+  },
+  icons: {
+    icon: '/icon-192.png',
+    apple: '/icon-192.png',
+  },
 }
 
 export const viewport: Viewport = {
-  themeColor: '#0f172a',
+  themeColor: '#000000',
   width: 'device-width',
   initialScale: 1,
+  maximumScale: 5,
+  viewportFit: 'cover',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pl" className={`${inter.variable} h-full`}>
       <body className="min-h-full bg-slate-950 text-slate-100 flex flex-col">
+        <PWAInstaller />
         <Providers>
           <Nav />
           <main className="flex-1 container mx-auto max-w-2xl px-4 pt-6 pb-32">

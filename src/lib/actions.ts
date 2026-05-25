@@ -2,7 +2,22 @@
 
 import { revalidatePath } from 'next/cache'
 import { prisma } from './prisma'
-import { auth } from '@/auth'
+import { auth, signIn } from '@/auth'
+import { AuthError } from 'next-auth'
+
+// ─── Authentication ───────────────────────────────────────────────────
+
+export async function authenticate(email: string, password: string): Promise<string | null> {
+  try {
+    await signIn('credentials', { email, password, redirectTo: '/' })
+    return null
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return 'Nieprawidłowy email lub hasło.'
+    }
+    throw error // re-throw NEXT_REDIRECT — musi przelecieć do klienta
+  }
+}
 
 // ─── Auth helper ──────────────────────────────────────────────────────
 
@@ -26,6 +41,12 @@ const sessionInclude = {
   planDay: true,
   unitLogs: {
     include: unitLogInclude,
+  },
+  activities: {
+    include: {
+      gym: { include: { grades: { orderBy: { order: 'asc' as const } } } },
+    },
+    orderBy: { createdAt: 'asc' as const },
   },
 }
 
@@ -289,8 +310,17 @@ export async function ensureSessionForDate(date: string, planDayId?: string, cyc
     select: { id: true },
   })
   if (existing) return existing.id
+  const cycle = await prisma.trainingCycle.findFirst({
+    where: { userId, status: 'open' },
+    orderBy: { startDate: 'desc' },
+  })
   const created = await prisma.trainingSession.create({
-    data: { date, userId, planDayId: planDayId ?? null, cycleNumber: cycleNumber ?? 1 },
+    data: {
+      date, userId,
+      planDayId: planDayId ?? null,
+      cycleNumber: cycleNumber ?? 1,
+      cycleId: cycle?.id ?? null,
+    },
     select: { id: true },
   })
   return created.id
@@ -471,7 +501,171 @@ export async function deleteClimbLog(id: string) {
   revalidatePath('/')
 }
 
-// ─── Cycle / Retrospective ────────────────────────────────────────────
+// ─── Training Cycles ──────────────────────────────────────────────────
+
+export async function getCurrentCycle() {
+  const userId = await getUserId()
+  return prisma.trainingCycle.findFirst({
+    where: { userId, status: 'open' },
+    orderBy: { startDate: 'desc' },
+    include: { sessions: { orderBy: { date: 'asc' } } },
+  })
+}
+
+export async function getCycles() {
+  const userId = await getUserId()
+  return prisma.trainingCycle.findMany({
+    where: { userId },
+    orderBy: { startDate: 'desc' },
+    include: {
+      sessions: { orderBy: { date: 'asc' } },
+      retrospective: true,
+    },
+  })
+}
+
+export async function startCycle(data?: { name?: string; startDate?: string }) {
+  const userId = await getUserId()
+  const today = new Date().toISOString().slice(0, 10)
+  const cycle = await prisma.trainingCycle.create({
+    data: { userId, name: data?.name, startDate: data?.startDate ?? today, status: 'open' },
+  })
+  revalidatePath('/')
+  revalidatePath('/retrospective')
+  return cycle
+}
+
+export async function updateCycleStatus(
+  id: string,
+  status: 'open' | 'retrospective' | 'finalized',
+  endDate?: string
+) {
+  const userId = await getUserId()
+  const cycle = await prisma.trainingCycle.update({
+    where: { id, userId },
+    data: { status, ...(endDate ? { endDate } : {}) },
+  })
+  revalidatePath('/')
+  revalidatePath('/retrospective')
+  return cycle
+}
+
+export async function getCycleWithSessions(id: string) {
+  const userId = await getUserId()
+  return prisma.trainingCycle.findUnique({
+    where: { id, userId },
+    include: {
+      sessions: {
+        orderBy: { date: 'asc' },
+        include: {
+          activities: {
+            include: {
+              gym: { include: { grades: { orderBy: { order: 'asc' } } } },
+            },
+            orderBy: { createdAt: 'asc' as const },
+          },
+        },
+      },
+      retrospective: true,
+    },
+  })
+}
+
+// ─── Activities ───────────────────────────────────────────────────────
+
+type ActivityInput = {
+  type: string
+  climbingType?: string
+  grade?: string
+  gymGradeOrder?: number
+  attempts?: number
+  success?: boolean
+  style?: string
+  distanceKm?: number
+  pace?: number
+  durationMin?: number
+  gymId?: string
+  name?: string
+  data?: string
+  notes?: string
+}
+
+export async function addActivityToDate(input: ActivityInput & { date: string }) {
+  const userId = await getUserId()
+  const { date, ...activityFields } = input
+
+  const cycle = await prisma.trainingCycle.findFirst({
+    where: { userId, status: 'open' },
+    orderBy: { startDate: 'desc' },
+  })
+
+  let session = await prisma.trainingSession.findUnique({
+    where: { userId_date: { userId, date } },
+  })
+  if (!session) {
+    session = await prisma.trainingSession.create({
+      data: { date, userId, cycleId: cycle?.id ?? null },
+    })
+  } else if (!session.cycleId && cycle) {
+    session = await prisma.trainingSession.update({
+      where: { id: session.id },
+      data: { cycleId: cycle.id },
+    })
+  }
+
+  const activity = await prisma.activity.create({
+    data: { ...activityFields, sessionId: session.id },
+    include: {
+      gym: { include: { grades: { orderBy: { order: 'asc' } } } },
+    },
+  })
+  revalidatePath('/today')
+  revalidatePath('/')
+  revalidatePath('/history')
+  return { sessionId: session.id, activity }
+}
+
+export async function updateActivity(id: string, input: Partial<ActivityInput>) {
+  await getUserId()
+  const activity = await prisma.activity.update({ where: { id }, data: input })
+  revalidatePath('/today')
+  revalidatePath('/')
+  return activity
+}
+
+export async function deleteActivity(id: string) {
+  await getUserId()
+  await prisma.activity.delete({ where: { id } })
+  revalidatePath('/today')
+  revalidatePath('/')
+  revalidatePath('/history')
+}
+
+// ─── Retrospective ────────────────────────────────────────────────────
+
+export async function saveRetrospective(cycleId: string, summary: string) {
+  const userId = await getUserId()
+  const retro = await prisma.retrospective.upsert({
+    where: { cycleId },
+    create: { cycleId, userId, summary, status: 'draft' },
+    update: { summary },
+  })
+  revalidatePath('/retrospective')
+  return retro
+}
+
+export async function finalizeRetrospective(cycleId: string) {
+  const userId = await getUserId()
+  const today = new Date().toISOString().slice(0, 10)
+  await prisma.$transaction([
+    prisma.retrospective.update({ where: { cycleId }, data: { status: 'finalized' } }),
+    prisma.trainingCycle.update({ where: { id: cycleId, userId }, data: { status: 'finalized', endDate: today } }),
+  ])
+  revalidatePath('/')
+  revalidatePath('/retrospective')
+}
+
+// ─── Legacy Cycle / Retrospective ─────────────────────────────────────
 
 export async function getMaxCycleNumber() {
   const userId = await getUserId()

@@ -7,6 +7,10 @@ datasource db {
   provider = "sqlite"
 }
 
+// ---------------------------------------------------------------------------
+// Core user
+// ---------------------------------------------------------------------------
+
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
@@ -14,11 +18,153 @@ model User {
   name         String?
   createdAt    DateTime @default(now())
 
-  units    TrainingUnit[]
-  planDays PlanDay[]
-  sessions TrainingSession[]
-  gyms     Gym[]
+  units          TrainingUnit[]
+  planDays       PlanDay[]
+  sessions       TrainingSession[]
+  gyms           Gym[]
+  cycles         TrainingCycle[]
+  retrospectives Retrospective[]
 }
+
+// ---------------------------------------------------------------------------
+// NEW: Training cycle (7-day period, primary analysis unit)
+// ---------------------------------------------------------------------------
+
+model TrainingCycle {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String?
+  startDate String   // "2026-05-11"
+  endDate   String?
+  status    String   @default("open") // open | retrospective | finalized
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions      TrainingSession[]
+  retrospective Retrospective?
+}
+
+// ---------------------------------------------------------------------------
+// Session = one day, many Activities
+// ---------------------------------------------------------------------------
+
+model TrainingSession {
+  id              String    @id @default(cuid())
+  userId          String
+  date            String
+  cycleId         String?
+  planDayId       String?
+  cycleNumber     Int       @default(1)
+  notes           String?
+  completedAt     DateTime?
+  rpe             Int?
+  fingersBefore   Int?
+  bicepsBefore    Int?
+  shouldersBefore Int?
+  fatigueBefore   Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cycle      TrainingCycle?  @relation(fields: [cycleId], references: [id], onDelete: SetNull)
+  planDay    PlanDay?        @relation(fields: [planDayId], references: [id], onDelete: SetNull)
+  unitLogs   SessionUnitLog[]
+  activities Activity[]
+
+  @@unique([userId, date])
+}
+
+// ---------------------------------------------------------------------------
+// NEW: Activity — single training unit within a session
+//
+// type = climbing | running | other
+//
+// Climbing fields: climbingType, grade, gymGradeOrder, attempts, success, style
+// Running fields:  distanceKm, pace
+// Shared:          durationMin, gymId, notes
+// Other:           name ("hangboard", "sauna", ...) + data (JSON string)
+// ---------------------------------------------------------------------------
+
+model Activity {
+  id            String   @id @default(cuid())
+  sessionId     String
+  type          String   // climbing | running | other
+
+  // Climbing
+  climbingType  String?  // bouldering | roped
+  grade         String?
+  gymGradeOrder Int?
+  attempts      Int?
+  success       Boolean?
+  style         String?  // onsight | flash | redpoint | topRope | attempt
+
+  // Running
+  distanceKm    Float?
+  pace          Float?   // min/km
+
+  // Shared
+  durationMin   Int?
+  gymId         String?
+
+  // Other (hangboard, sauna, strength, warmup, ...)
+  name          String?  // free-text activity name
+  data          String?  // JSON: { edge_mm, weight_kg, sets, ... }
+
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  session TrainingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  gym     Gym?            @relation(fields: [gymId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// NEW: Retrospective — AI-generated cycle analysis
+// ---------------------------------------------------------------------------
+
+model Retrospective {
+  id        String   @id @default(cuid())
+  cycleId   String   @unique
+  userId    String
+  status    String   @default("draft") // draft | finalized
+  summary   String   // JSON: metrics, cycleAnalysis, recommendations, nextCyclePlan
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cycle TrainingCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Gym + grade mapping (unchanged)
+// ---------------------------------------------------------------------------
+
+model Gym {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  type      String   @default("boulder")
+  createdAt DateTime @default(now())
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  grades      GradeMapping[]
+  sessionLogs SessionUnitLog[]
+  activities  Activity[]
+}
+
+model GradeMapping {
+  id         String @id @default(cuid())
+  gymId      String
+  localGrade String
+  order      Int
+
+  gym Gym @relation(fields: [gymId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Legacy: plan-based models (kept for template/history, not core flow)
+// ---------------------------------------------------------------------------
 
 model TrainingUnit {
   id          String   @id @default(cuid())
@@ -50,62 +196,18 @@ model PlanDay {
 }
 
 model PlanDayUnit {
-  id             String @id @default(cuid())
+  id             String  @id @default(cuid())
   planDayId      String
   trainingUnitId String
   order          Int
   targetReps     Int?
   targetSets     Int?
-  timesPerDay    Int    @default(1)
+  timesPerDay    Int     @default(1)
   notes          String?
 
-  planDay      PlanDay      @relation(fields: [planDayId], references: [id], onDelete: Cascade)
-  trainingUnit TrainingUnit @relation(fields: [trainingUnitId], references: [id], onDelete: Cascade)
+  planDay      PlanDay        @relation(fields: [planDayId], references: [id], onDelete: Cascade)
+  trainingUnit TrainingUnit   @relation(fields: [trainingUnitId], references: [id], onDelete: Cascade)
   sessionLogs  SessionUnitLog[]
-}
-
-model TrainingSession {
-  id              String    @id @default(cuid())
-  userId          String
-  date            String
-  planDayId       String?
-  cycleNumber     Int       @default(1)
-  notes           String?
-  completedAt     DateTime?
-  rpe             Int?
-  fingersBefore   Int?
-  bicepsBefore    Int?
-  shouldersBefore Int?
-  fatigueBefore   Int?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  planDay  PlanDay?         @relation(fields: [planDayId], references: [id], onDelete: SetNull)
-  unitLogs SessionUnitLog[]
-
-  @@unique([userId, date])
-}
-
-model Gym {
-  id        String   @id @default(cuid())
-  userId    String
-  name      String
-  type      String   @default("boulder")
-  createdAt DateTime @default(now())
-
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  grades      GradeMapping[]
-  sessionLogs SessionUnitLog[]
-}
-
-model GradeMapping {
-  id         String @id @default(cuid())
-  gymId      String
-  localGrade String
-  order      Int
-
-  gym Gym @relation(fields: [gymId], references: [id], onDelete: Cascade)
 }
 
 model SessionUnitLog {
